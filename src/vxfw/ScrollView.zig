@@ -24,26 +24,41 @@ pub const Source = union(enum) {
 };
 
 const Scroll = struct {
-    /// Index of the first fully-in-view widget
+    /// Index of the first fully-in-view widget.
     top: u32 = 0,
     /// Line offset within the top widget.
-    offset: i17 = 0,
-    /// Pending scroll amount
+    vertical_offset: i17 = 0,
+    /// Pending vertical scroll amount.
     pending_lines: i17 = 0,
-    /// If there is more room to scroll down
-    has_more: bool = true,
-    /// The cursor must be in the viewport
+    /// If there is more room to scroll down.
+    has_more_vertical: bool = true,
+    /// The column of the first in-view column.
+    left: u32 = 0,
+    /// If there is more room to scroll right.
+    has_more_horizontal: bool = true,
+    /// The cursor must be in the viewport.
     wants_cursor: bool = false,
 
     pub fn linesDown(self: *Scroll, n: u8) bool {
-        if (!self.has_more) return false;
+        if (!self.has_more_vertical) return false;
         self.pending_lines += n;
         return true;
     }
 
     pub fn linesUp(self: *Scroll, n: u8) bool {
-        if (self.top == 0 and self.offset == 0) return false;
+        if (self.top == 0 and self.vertical_offset == 0) return false;
         self.pending_lines -= @intCast(n);
+        return true;
+    }
+
+    pub fn colsLeft(self: *Scroll, n: u8) bool {
+        if (self.left == 0) return false;
+        self.left -|= n;
+        return true;
+    }
+    pub fn colsRight(self: *Scroll, n: u8) bool {
+        if (!self.has_more_horizontal) return false;
+        self.left +|= n;
         return true;
     }
 };
@@ -93,6 +108,14 @@ pub fn handleEvent(self: *ScrollView, ctx: *vxfw.EventContext, event: vxfw.Event
                 if (self.scroll.linesDown(self.wheel_scroll))
                     return ctx.consumeAndRedraw();
             }
+            if (mouse.button == .wheel_left) {
+                if (self.scroll.colsRight(self.wheel_scroll))
+                    return ctx.consumeAndRedraw();
+            }
+            if (mouse.button == .wheel_right) {
+                if (self.scroll.colsLeft(self.wheel_scroll))
+                    return ctx.consumeAndRedraw();
+            }
         },
         .key_press => |key| {
             if (key.matches(vaxis.Key.down, .{}) or
@@ -114,6 +137,18 @@ pub fn handleEvent(self: *ScrollView, ctx: *vxfw.EventContext, event: vxfw.Event
 
                 // Otherwise scroll the view up.
                 if (self.scroll.linesUp(1)) ctx.consumeAndRedraw();
+            }
+            if (key.matches(vaxis.Key.right, .{}) or
+                key.matches('l', .{}) or
+                key.matches('f', .{ .ctrl = true }))
+            {
+                if (self.scroll.colsRight(1)) ctx.consumeAndRedraw();
+            }
+            if (key.matches(vaxis.Key.left, .{}) or
+                key.matches('h', .{}) or
+                key.matches('b', .{ .ctrl = true }))
+            {
+                if (self.scroll.colsLeft(1)) ctx.consumeAndRedraw();
             }
             if (key.matches('d', .{ .ctrl = true })) {
                 const scroll_lines = @max(self.last_height / 2, 1);
@@ -226,7 +261,7 @@ pub fn prevItem(self: *ScrollView, ctx: *vxfw.EventContext) void {
 pub fn ensureScroll(self: *ScrollView) void {
     if (self.cursor <= self.scroll.top) {
         self.scroll.top = @intCast(self.cursor);
-        self.scroll.offset = 0;
+        self.scroll.vertical_offset = 0;
     } else {
         self.scroll.wants_cursor = true;
     }
@@ -252,8 +287,8 @@ fn insertChildren(
 
         // Set up constraints. We let the child be the entire height if it wants
         const child_ctx = ctx.withConstraints(
-            .{ .width = max_size.width - 1 - child_offset, .height = 0 },
-            .{ .width = max_size.width - 1 - child_offset, .height = null },
+            .{ .width = max_size.width - child_offset, .height = 0 },
+            .{ .width = null, .height = null },
         );
 
         // Draw the child
@@ -263,8 +298,9 @@ fn insertChildren(
         upheight -= surf.size.height;
 
         // Insert the child to the beginning of the list
+        const col_offset: i17 = if (self.draw_cursor) 2 else 0;
         try child_list.insert(0, .{
-            .origin = .{ .col = if (self.draw_cursor) 2 else 0, .row = upheight },
+            .origin = .{ .col = col_offset - @as(i17, @intCast(self.scroll.left)), .row = upheight },
             .surface = surf,
             .z_index = 0,
         });
@@ -274,11 +310,11 @@ fn insertChildren(
     }
 
     // Our new offset is the "upheight"
-    self.scroll.offset = upheight;
+    self.scroll.vertical_offset = upheight;
 
     // Reset origins if we overshot and put the top item too low
     if (self.scroll.top == 0 and upheight > 0) {
-        self.scroll.offset = 0;
+        self.scroll.vertical_offset = 0;
         var row: i17 = 0;
         for (child_list.items) |*child| {
             child.origin.row = row;
@@ -286,7 +322,7 @@ fn insertChildren(
         }
     }
     // Our new offset is the "upheight"
-    self.scroll.offset = upheight;
+    self.scroll.vertical_offset = upheight;
 }
 
 fn totalHeight(list: *const std.ArrayList(vxfw.SubSurface)) usize {
@@ -314,7 +350,7 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
     {
         surface.focusable = true;
         // Assume we have more. We only know we don't after drawing
-        self.scroll.has_more = true;
+        self.scroll.has_more_vertical = true;
     }
 
     var child_list = std.ArrayList(vxfw.SubSurface).init(ctx.arena);
@@ -338,7 +374,7 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
     //      accumulated_height = -(0 + 3) = -3;
     //      Our first widget is placed at row -3. It's possible it consumes the entire widget. We
     //      will check for this at the end and only include visible children
-    var accumulated_height: i17 = -(self.scroll.offset + self.scroll.pending_lines);
+    var accumulated_height: i17 = -(self.scroll.vertical_offset + self.scroll.pending_lines);
 
     // We handled the pending scroll by assigning accumulated_height. Reset it's state
     self.scroll.pending_lines = 0;
@@ -351,7 +387,7 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
     // accumulated_height > 0, we reset state here. We can't scroll up anymore so we set
     // accumulated_height to 0.
     if (accumulated_height > 0 and self.scroll.top == 0) {
-        self.scroll.offset = 0;
+        self.scroll.vertical_offset = 0;
         accumulated_height = 0;
     }
 
@@ -371,7 +407,7 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
         // Set up constraints. We let the child be the entire height if it wants
         const child_ctx = ctx.withConstraints(
             .{ .width = max_size.width - child_offset, .height = 0 },
-            .{ .width = max_size.width - child_offset, .height = null },
+            .{ .width = null, .height = null },
         );
 
         // Draw the child
@@ -381,7 +417,7 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
 
         // Add the child surface to our list. It's offset from parent is the accumulated height
         try child_list.append(.{
-            .origin = .{ .col = child_offset, .row = accumulated_height },
+            .origin = .{ .col = child_offset - @as(i17, @intCast(self.scroll.left)), .row = accumulated_height },
             .surface = surf,
             .z_index = 0,
         });
@@ -395,21 +431,21 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
             break; // Break if we drew enough
     } else {
         // This branch runs if we ran out of items. Set our state accordingly
-        self.scroll.has_more = false;
+        self.scroll.has_more_vertical = false;
     }
 
     // If we've looped through all the items without hitting the end we check for one more item to
     // see if we just drew the last item on the bottom of the screen. If we just drew the last item
     // we can set `scroll.has_more` to false.
-    if (self.scroll.has_more) {
-        if (builder.itemAtIdx(i, self.cursor) == null) self.scroll.has_more = false;
+    if (self.scroll.has_more_vertical) {
+        if (builder.itemAtIdx(i, self.cursor) == null) self.scroll.has_more_vertical = false;
     }
 
     var total_height: usize = totalHeight(&child_list);
 
     // If we reached the bottom, don't have enough height to fill the screen, and have room to add
     // more, then we add more until out of items or filled the space. This can happen on a resize
-    if (!self.scroll.has_more and total_height < max_size.height and self.scroll.top > 0) {
+    if (!self.scroll.has_more_vertical and total_height < max_size.height and self.scroll.top > 0) {
         try self.insertChildren(ctx, builder, &child_list, @intCast(max_size.height - total_height));
         // Set the new total height
         total_height = totalHeight(&child_list);
@@ -424,7 +460,7 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
         const sub = try ctx.arena.alloc(vxfw.SubSurface, 1);
         const child = child_list.items[cursored_idx];
         sub[0] = .{
-            .origin = .{ .col = child_offset, .row = 0 },
+            .origin = .{ .col = child_offset - @as(i17, @intCast(self.scroll.left)), .row = 0 },
             .surface = child.surface,
             .z_index = 0,
         };
@@ -467,10 +503,10 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
             // We need to change the max constraint to be optional sizes so that we can support
             // unbounded drawing in scrollable areas
             self.scroll.top = self.cursor;
-            self.scroll.offset = 0;
+            self.scroll.vertical_offset = 0;
             child_list.deinit();
             try child_list.append(.{
-                .origin = .{ .col = 0, .row = 0 },
+                .origin = .{ .col = 0 - @as(i17, @intCast(self.scroll.left)), .row = 0 },
                 .surface = sub.surface,
                 .z_index = 0,
             });
@@ -479,10 +515,10 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
     }
 
     // If we reached the bottom, we need to reset origins
-    if (!self.scroll.has_more and total_height < max_size.height) {
+    if (!self.scroll.has_more_vertical and total_height < max_size.height) {
         // anchor top
         assert(self.scroll.top == 0);
-        self.scroll.offset = 0;
+        self.scroll.vertical_offset = 0;
         var origin: i17 = 0;
         for (0..child_list.items.len) |idx| {
             var child = child_list.items[idx];
@@ -490,7 +526,7 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
             origin += child.surface.size.height;
             child_list.items[idx] = child;
         }
-    } else if (!self.scroll.has_more) {
+    } else if (!self.scroll.has_more_vertical) {
         // anchor bottom
         var origin: i17 = max_size.height;
         var idx: usize = child_list.items.len;
@@ -502,13 +538,22 @@ fn drawBuilder(self: *ScrollView, ctx: vxfw.DrawContext, builder: Builder) Alloc
         }
     }
 
+    // Reset horizontal scroll info.
+    self.scroll.has_more_horizontal = false;
+    for (child_list.items) |child| {
+        if (child.surface.size.width -| self.scroll.left > max_size.width) {
+            self.scroll.has_more_horizontal = true;
+            break;
+        }
+    }
+
     var start: usize = 0;
     var end: usize = child_list.items.len;
 
     for (child_list.items, 0..) |child, idx| {
         if (child.origin.row <= 0 and child.origin.row + child.surface.size.height > 0) {
             start = idx;
-            self.scroll.offset = -child.origin.row;
+            self.scroll.vertical_offset = -child.origin.row;
             self.scroll.top += @intCast(idx);
         }
         if (child.origin.row > max_size.height) {
@@ -621,7 +666,7 @@ test ScrollView {
     try scroll_widget.handleEvent(&ctx, .{ .mouse = mouse_event });
     // Wheel up doesn't adjust the scroll
     try std.testing.expectEqual(0, scroll_view.scroll.top);
-    try std.testing.expectEqual(0, scroll_view.scroll.offset);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
 
     // Send a wheel down
     mouse_event.button = .wheel_down;
@@ -637,7 +682,7 @@ test ScrollView {
     // 6     mno
     // We should have gone down 1 line, and not changed our top widget
     try std.testing.expectEqual(0, scroll_view.scroll.top);
-    try std.testing.expectEqual(1, scroll_view.scroll.offset);
+    try std.testing.expectEqual(1, scroll_view.scroll.vertical_offset);
     // One more widget has scrolled into view
     try std.testing.expectEqual(4, surface.children.len);
 
@@ -654,14 +699,14 @@ test ScrollView {
     // 6 |   mno
     // We should have gone down 2 lines, which scrolls our top widget out of view
     try std.testing.expectEqual(1, scroll_view.scroll.top);
-    try std.testing.expectEqual(0, scroll_view.scroll.offset);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
     try std.testing.expectEqual(4, surface.children.len);
 
     // Scroll down again. We shouldn't advance anymore since we are at the bottom
     try scroll_widget.handleEvent(&ctx, .{ .mouse = mouse_event });
     surface = try scroll_widget.draw(draw_ctx);
     try std.testing.expectEqual(1, scroll_view.scroll.top);
-    try std.testing.expectEqual(0, scroll_view.scroll.offset);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
     try std.testing.expectEqual(4, surface.children.len);
 
     // Mouse wheel events don't change the cursor position. Let's press "escape" to reset the
@@ -669,7 +714,7 @@ test ScrollView {
     try scroll_widget.handleEvent(&ctx, .{ .key_press = .{ .codepoint = vaxis.Key.escape } });
     surface = try scroll_widget.draw(draw_ctx);
     try std.testing.expectEqual(0, scroll_view.scroll.top);
-    try std.testing.expectEqual(0, scroll_view.scroll.offset);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
     try std.testing.expectEqual(3, surface.children.len);
 
     // Turn on the cursor.
@@ -687,7 +732,7 @@ test ScrollView {
     // 6     mno
     // Scroll doesn't change
     try std.testing.expectEqual(0, scroll_view.scroll.top);
-    try std.testing.expectEqual(0, scroll_view.scroll.offset);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
     try std.testing.expectEqual(3, surface.children.len);
     try std.testing.expectEqual(1, scroll_view.cursor);
 
@@ -708,7 +753,7 @@ test ScrollView {
     // 6     mno
     // Scroll advances one row
     try std.testing.expectEqual(0, scroll_view.scroll.top);
-    try std.testing.expectEqual(1, scroll_view.scroll.offset);
+    try std.testing.expectEqual(1, scroll_view.scroll.vertical_offset);
     try std.testing.expectEqual(4, surface.children.len);
     try std.testing.expectEqual(2, scroll_view.cursor);
 
@@ -725,7 +770,7 @@ test ScrollView {
     // We are cursored onto the last item. The entire last item comes into view, effectively
     // advancing the scroll by 2
     try std.testing.expectEqual(1, scroll_view.scroll.top);
-    try std.testing.expectEqual(0, scroll_view.scroll.offset);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
     try std.testing.expectEqual(4, surface.children.len);
     try std.testing.expectEqual(3, scroll_view.cursor);
 }
@@ -807,7 +852,7 @@ test "ScrollView: uneven scroll" {
     // 5 |
     // 6 |
     try std.testing.expectEqual(3, scroll_view.scroll.top);
-    try std.testing.expectEqual(0, scroll_view.scroll.offset);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
     try std.testing.expectEqual(5, surface.children.len);
 
     // Now wheel_up two times should move us two lines up
@@ -816,7 +861,7 @@ test "ScrollView: uneven scroll" {
     try scroll_widget.handleEvent(&ctx, .{ .mouse = mouse_event });
     surface = try scroll_widget.draw(draw_ctx);
     try std.testing.expectEqual(1, scroll_view.scroll.top);
-    try std.testing.expectEqual(0, scroll_view.scroll.offset);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
     try std.testing.expectEqual(5, surface.children.len);
 }
 
