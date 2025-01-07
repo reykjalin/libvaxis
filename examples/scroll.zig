@@ -37,7 +37,10 @@ const ModelRow = struct {
                 ctx.min,
                 // We've shifted the origin over 6 columns so we need to take that into account or
                 // we'll draw outside the window.
-                .{ .width = if (ctx.max.width) |w| w - 6 else null, .height = ctx.max.height },
+                if (self.wrap_lines)
+                    .{ .width = ctx.min.width -| 6, .height = ctx.max.height }
+                else
+                    .{ .width = if (ctx.max.width) |w| w - 6 else null, .height = ctx.max.height },
             )),
         };
 

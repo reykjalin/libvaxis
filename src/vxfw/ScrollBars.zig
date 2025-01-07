@@ -11,7 +11,7 @@ const ScrollBars = @This();
 scroll_view: vxfw.ScrollView,
 /// If `true` a horizontal scroll bar will be drawn. Set to `false` to hide the horizontal scroll
 /// bar. Defaults to `true`.
-draw_horizontal_scrollbar: bool = false,
+draw_horizontal_scrollbar: bool = true,
 /// If `true` a vertical scroll bar will be drawn. Set to `false` to hide the vertical scroll bar.
 /// Defaults to `true`.
 draw_vertical_scrollbar: bool = true,
@@ -25,6 +25,17 @@ draw_vertical_scrollbar: bool = true,
 /// Note that this doesn't necessarily have to be an accurate estimate and the tolerance for larger
 /// views is quite forgiving, especially if you overshoot the estimate.
 estimated_content_height: ?u32 = null,
+/// The estimated width of all the content in the ScrollView. When provided this width will be  used
+/// to calculate the size of the scrollbar's thumb. If this is not provided the widget will  make a
+/// best effort estimate of the size of the thumb using the width of  the elements rendered at  any
+/// given time. This will cause inconsistent thumb sizes - and possibly inconsistent  positioning -
+/// if different elements in the ScrollView have different widths. For the best user  experience,
+/// providing this estimate is strongly recommended.
+///
+/// Note that this doesn't necessarily have to be
+/// an accurate estimate and the tolerance for larger  views is quite forgiving, especially if you
+/// overshoot the estimate.
+estimated_content_width: ?u32 = null,
 /// The cell drawn for the vertical scroll thumb. Replace this to customize the scroll thumb. Must
 /// have a 1 column width.
 vertical_scrollbar_thumb: vaxis.Cell = .{ .char = .{ .grapheme = "▐", .width = 1 } },
@@ -53,6 +64,9 @@ horizontal_scrollbar_drag_thumb: vaxis.Cell = .{
 /// You should not change this variable, treat it as private to the implementation. Used to track
 /// the size of the widget so we can locate scroll bars for mouse interaction.
 last_frame_size: vxfw.Size = .{ .width = 0, .height = 0 },
+/// You should not change this variable, treat it as private to the implementation. Used to track
+/// the width of the content so we map horizontal scroll thumb position to view position.
+last_frame_max_content_width: u32 = 0,
 /// You should not change this variable, treat it as private to the implementation. Used to track
 /// the position of the mouse relative to the scroll thumb for mouse interaction.
 mouse_offset_into_thumb: u8 = 0,
@@ -215,8 +229,32 @@ pub fn handleCapture(self: *ScrollBars, ctx: *vxfw.EventContext, event: vxfw.Eve
 
                 // Process dragging the horizontal thumb.
                 if (mouse.type == .drag) {
-                    // TODO: Update horizontal scroll position based on current mouse/thumb
-                    //       position.
+                    // Make sure we consume the event if we're currently dragging the mouse so other
+                    // events aren't sent in the mean time.
+                    ctx.consumeEvent();
+
+                    // New scroll thumb position.
+                    const new_thumb_col_start = mouse.col -| self.mouse_offset_into_thumb;
+
+                    // If the new thumb position is at the horizontal beginning of the current view
+                    // we know we've scrolled to the  beginning of the scroll view.
+                    if (new_thumb_col_start == 0) {
+                        self.scroll_view.scroll.left = 0;
+                        return ctx.consumeAndRedraw();
+                    }
+
+                    const new_thumb_col_start_f: f32 = @floatFromInt(new_thumb_col_start);
+                    const widget_width_f: f32 = @floatFromInt(self.last_frame_size.width);
+
+                    const max_content_width_f: f32 = @floatFromInt(self.last_frame_max_content_width);
+
+                    const new_view_col_start_f = new_thumb_col_start_f * max_content_width_f / widget_width_f;
+                    const new_view_col_start: u32 = @intFromFloat(@ceil(new_view_col_start_f));
+
+                    self.scroll_view.scroll.left = @min(new_view_col_start, self.last_frame_max_content_width);
+                    // self.scroll_view.scroll.left = self.last_frame_max_content_width;
+
+                    return ctx.consumeAndRedraw();
                 }
             }
         },
@@ -332,7 +370,7 @@ pub fn draw(self: *ScrollBars, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surfa
 
     if (self.draw_vertical_scrollbar) vertical: {
         // If we can't scroll, then there's no need to draw the scroll bar.
-        if (self.scroll_view.scroll.top == 0 and !self.scroll_view.scroll.has_more) break :vertical;
+        if (self.scroll_view.scroll.top == 0 and !self.scroll_view.scroll.has_more_vertical) break :vertical;
 
         // To draw the vertical scrollbar we need to know how big the scroll bar thumb should be.
         // If we've been provided with an estimated height we use that to figure out how big the
@@ -379,7 +417,7 @@ pub fn draw(self: *ScrollBars, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surfa
 
         const thumb_top: u32 = if (self.scroll_view.scroll.top == 0)
             0
-        else if (self.scroll_view.scroll.has_more) pos: {
+        else if (self.scroll_view.scroll.has_more_vertical) pos: {
             const top_child_idx_f: f32 = @floatFromInt(self.scroll_view.scroll.top);
             const thumb_top_f = widget_height_f * top_child_idx_f / total_num_children_f;
 
@@ -423,33 +461,66 @@ pub fn draw(self: *ScrollBars, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surfa
 
     // 5. TODO: Draw the horizontal scroll bar.
 
-    // if (self.draw_horizontal_scrollbar) {
-    //     const scroll_bar = try vxfw.Surface.init(
-    //         ctx.arena,
-    //         self.widget(),
-    //         .{ .width = max.width, .height = 1 },
-    //     );
-    //     const thumb_start = 0;
-    //     const thumb_end = max.width / 2;
-    //     for (thumb_start..thumb_end) |col| {
-    //         scroll_bar.writeCell(
-    //             @intCast(col),
-    //             0,
-    //             if (self.is_dragging_horizontal_thumb)
-    //                 self.horizontal_scrollbar_drag_thumb
-    //             else if (self.is_hovering_horizontal_thumb)
-    //                 self.horizontal_scrollbar_hover_thumb
-    //             else
-    //                 self.horizontal_scrollbar_thumb,
-    //         );
-    //     }
-    //     self.horizontal_thumb_start_col = thumb_start;
-    //     self.horizontal_thumb_end_col = thumb_end;
-    //     try children.append(.{
-    //         .origin = .{ .row = max.height -| 1, .col = 0 },
-    //         .surface = scroll_bar,
-    //     });
-    // }
+    const is_horizontally_scrolled = self.scroll_view.scroll.left > 0;
+    const has_more_horizontal_content = self.scroll_view.scroll.has_more_horizontal;
+
+    const should_draw_scrollbar = is_horizontally_scrolled or has_more_horizontal_content;
+
+    if (self.draw_horizontal_scrollbar and should_draw_scrollbar) {
+        const scroll_bar = try vxfw.Surface.init(
+            ctx.arena,
+            self.widget(),
+            .{ .width = max.width, .height = 1 },
+        );
+
+        const widget_width_f: f32 = @floatFromInt(max.width);
+
+        const max_content_width: u32 = width: {
+            if (self.estimated_content_width) |w| break :width w;
+
+            var max_content_width: u32 = 0;
+            for (scroll_view_surface.children) |child| {
+                max_content_width = @max(max_content_width, child.surface.size.width);
+            }
+            break :width max_content_width;
+        };
+        const max_content_width_f: f32 = if (self.scroll_view.scroll.left + max.width > max_content_width)
+            // If we've managed to overscroll horizontally for whatever reason - for example if the
+            // content changes - we make sure the scroll thumb doesn't disappear by increasing the
+            // max content width to match the current overscrolled position.
+            @floatFromInt(self.scroll_view.scroll.left + max.width)
+        else
+            @floatFromInt(max_content_width);
+
+        self.last_frame_max_content_width = max_content_width;
+
+        const thumb_width_f: f32 = widget_width_f * widget_width_f / max_content_width_f;
+        const thumb_width: u32 = @intFromFloat(@max(thumb_width_f, 1));
+
+        const view_start_col_f: f32 = @floatFromInt(self.scroll_view.scroll.left);
+        const thumb_start_f = view_start_col_f * widget_width_f / max_content_width_f;
+
+        const thumb_start: u32 = @intFromFloat(thumb_start_f);
+        const thumb_end = thumb_start + thumb_width;
+        for (thumb_start..thumb_end) |col| {
+            scroll_bar.writeCell(
+                @intCast(col),
+                0,
+                if (self.is_dragging_horizontal_thumb)
+                    self.horizontal_scrollbar_drag_thumb
+                else if (self.is_hovering_horizontal_thumb)
+                    self.horizontal_scrollbar_hover_thumb
+                else
+                    self.horizontal_scrollbar_thumb,
+            );
+        }
+        self.horizontal_thumb_start_col = thumb_start;
+        self.horizontal_thumb_end_col = thumb_end;
+        try children.append(.{
+            .origin = .{ .row = max.height -| 1, .col = 0 },
+            .surface = scroll_bar,
+        });
+    }
 
     return .{
         .size = ctx.max.size(),
