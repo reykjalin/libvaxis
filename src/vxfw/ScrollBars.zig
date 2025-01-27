@@ -459,7 +459,7 @@ pub fn draw(self: *ScrollBars, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surfa
         });
     }
 
-    // 5. TODO: Draw the horizontal scroll bar.
+    // 5. Draw the horizontal scroll bar.
 
     const is_horizontally_scrolled = self.scroll_view.scroll.left > 0;
     const has_more_horizontal_content = self.scroll_view.scroll.has_more_horizontal;
