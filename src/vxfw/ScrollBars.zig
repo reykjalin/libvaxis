@@ -246,13 +246,15 @@ pub fn handleCapture(self: *ScrollBars, ctx: *vxfw.EventContext, event: vxfw.Eve
                     const new_thumb_col_start_f: f32 = @floatFromInt(new_thumb_col_start);
                     const widget_width_f: f32 = @floatFromInt(self.last_frame_size.width);
 
-                    const max_content_width_f: f32 = @floatFromInt(self.last_frame_max_content_width);
+                    const max_content_width_f: f32 =
+                        @floatFromInt(self.last_frame_max_content_width);
 
-                    const new_view_col_start_f = new_thumb_col_start_f * max_content_width_f / widget_width_f;
+                    const new_view_col_start_f =
+                        new_thumb_col_start_f * max_content_width_f / widget_width_f;
                     const new_view_col_start: u32 = @intFromFloat(@ceil(new_view_col_start_f));
 
-                    self.scroll_view.scroll.left = @min(new_view_col_start, self.last_frame_max_content_width);
-                    // self.scroll_view.scroll.left = self.last_frame_max_content_width;
+                    self.scroll_view.scroll.left =
+                        @min(new_view_col_start, self.last_frame_max_content_width);
 
                     return ctx.consumeAndRedraw();
                 }
@@ -370,7 +372,8 @@ pub fn draw(self: *ScrollBars, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surfa
 
     if (self.draw_vertical_scrollbar) vertical: {
         // If we can't scroll, then there's no need to draw the scroll bar.
-        if (self.scroll_view.scroll.top == 0 and !self.scroll_view.scroll.has_more_vertical) break :vertical;
+        if (self.scroll_view.scroll.top == 0 and !self.scroll_view.scroll.has_more_vertical)
+            break :vertical;
 
         // To draw the vertical scrollbar we need to know how big the scroll bar thumb should be.
         // If we've been provided with an estimated height we use that to figure out how big the
@@ -484,7 +487,8 @@ pub fn draw(self: *ScrollBars, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surfa
             }
             break :width max_content_width;
         };
-        const max_content_width_f: f32 = if (self.scroll_view.scroll.left + max.width > max_content_width)
+        const max_content_width_f: f32 =
+            if (self.scroll_view.scroll.left + max.width > max_content_width)
             // If we've managed to overscroll horizontally for whatever reason - for example if the
             // content changes - we make sure the scroll thumb doesn't disappear by increasing the
             // max content width to match the current overscrolled position.
