@@ -530,6 +530,8 @@ pub fn draw(self: *ScrollBars, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surfa
     };
 }
 
+test ScrollBars {}
+
 test "refAllDecls" {
     std.testing.refAllDecls(@This());
 }
