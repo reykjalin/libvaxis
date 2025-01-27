@@ -988,7 +988,100 @@ test ScrollView {
 
 // @reykjalin found an issue on mac with ghostty where the scroll up and scroll down were uneven.
 // Ghostty has high precision scrolling and sends a lot of wheel events for each tick
-test "ScrollView: uneven scroll" {}
+test "ScrollView: uneven scroll" {
+    // Create child widgets
+    const Text = @import("Text.zig");
+    const zero: Text = .{ .text = "0" };
+    const one: Text = .{ .text = "1" };
+    const two: Text = .{ .text = "2" };
+    const three: Text = .{ .text = "3" };
+    const four: Text = .{ .text = "4" };
+    const five: Text = .{ .text = "5" };
+    const six: Text = .{ .text = "6" };
+    // 0 |
+    // 1 |
+    // 2 |
+    // 3 |
+    // 4
+    // 5
+    // 6
+
+    // Create the list view
+    const scroll_view: ScrollView = .{
+        .wheel_scroll = 1, // Set wheel scroll to one
+        .children = .{ .slice = &.{
+            zero.widget(),
+            one.widget(),
+            two.widget(),
+            three.widget(),
+            four.widget(),
+            five.widget(),
+            six.widget(),
+        } },
+    };
+
+    // Boiler plate draw context
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const ucd = try vaxis.Unicode.init(arena.allocator());
+    vxfw.DrawContext.init(&ucd, .unicode);
+
+    const scroll_widget = scroll_view.widget();
+    const draw_ctx: vxfw.DrawContext = .{
+        .arena = arena.allocator(),
+        .min = .{},
+        .max = .{ .width = 16, .height = 4 },
+    };
+
+    var surface = try scroll_widget.draw(draw_ctx);
+
+    var mouse_event: vaxis.Mouse = .{
+        .col = 0,
+        .row = 0,
+        .button = .wheel_up,
+        .mods = .{},
+        .type = .press,
+    };
+    // Event handlers need a context
+    var ctx: vxfw.EventContext = .{
+        .cmds = std.ArrayList(vxfw.Command).init(std.testing.allocator),
+    };
+    defer ctx.cmds.deinit();
+
+    // Send a wheel down x 3
+    mouse_event.button = .wheel_down;
+    try scroll_widget.handleEvent(&ctx, .{ .mouse = mouse_event });
+    try scroll_widget.handleEvent(&ctx, .{ .mouse = mouse_event });
+    try scroll_widget.handleEvent(&ctx, .{ .mouse = mouse_event });
+    // We have to draw the widget for scrolls to take effect
+    surface = try scroll_widget.draw(draw_ctx);
+    // 0
+    // 1
+    // 2
+    // 3 |
+    // 4 |
+    // 5 |
+    // 6 |
+    try std.testing.expectEqual(3, scroll_view.scroll.top);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
+    // The first time we draw again we still draw all 7 children due to how pending scroll events
+    // work.
+    try std.testing.expectEqual(7, surface.children.len);
+
+    surface = try scroll_widget.draw(draw_ctx);
+    // By drawing again without any pending events there are now only the 4 visible elements
+    // rendered.
+    try std.testing.expectEqual(4, surface.children.len);
+
+    // Now wheel_up two times should move us two lines up
+    mouse_event.button = .wheel_up;
+    try scroll_widget.handleEvent(&ctx, .{ .mouse = mouse_event });
+    try scroll_widget.handleEvent(&ctx, .{ .mouse = mouse_event });
+    surface = try scroll_widget.draw(draw_ctx);
+    try std.testing.expectEqual(1, scroll_view.scroll.top);
+    try std.testing.expectEqual(0, scroll_view.scroll.vertical_offset);
+    try std.testing.expectEqual(4, surface.children.len);
+}
 
 test "refAllDecls" {
     std.testing.refAllDecls(@This());
