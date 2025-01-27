@@ -50,7 +50,7 @@ const ModelRow = struct {
 
         return .{
             .size = .{
-                .width = idx_surf.surface.size.width + text_surf.surface.size.width,
+                .width = 6 + text_surf.surface.size.width,
                 .height = @max(idx_surf.surface.size.height, text_surf.surface.size.height),
             },
             .widget = self.widget(),
