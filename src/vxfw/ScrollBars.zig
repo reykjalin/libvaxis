@@ -534,7 +534,98 @@ pub fn draw(self: *ScrollBars, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surfa
     };
 }
 
-test ScrollBars {}
+test ScrollBars {
+    // Create child widgets
+    const Text = @import("Text.zig");
+    const abc: Text = .{ .text = "abc\n  def\n  ghi" };
+    const def: Text = .{ .text = "def" };
+    const ghi: Text = .{ .text = "ghi" };
+    const jklmno: Text = .{ .text = "jkl\n mno" };
+    //
+    // 0 |abc|
+    // 1 |  d|ef
+    // 2 |  g|hi
+    // 3 |def|
+    // 4  ghi
+    // 5  jkl
+    // 6    mno
+
+    // Create the scroll view
+    const ScrollView = @import("ScrollView.zig");
+    const scroll_view: ScrollView = .{
+        .wheel_scroll = 1, // Set wheel scroll to one
+        .children = .{ .slice = &.{
+            abc.widget(),
+            def.widget(),
+            ghi.widget(),
+            jklmno.widget(),
+        } },
+    };
+
+    // Create the scroll bars.
+    var scroll_bars: ScrollBars = .{
+        .scroll_view = scroll_view,
+        .estimated_content_height = 7,
+        .estimated_content_width = 5,
+    };
+
+    // Boiler plate draw context
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const ucd = try vaxis.Unicode.init(arena.allocator());
+    vxfw.DrawContext.init(&ucd, .unicode);
+
+    const scroll_widget = scroll_bars.widget();
+    const draw_ctx: vxfw.DrawContext = .{
+        .arena = arena.allocator(),
+        .min = .{},
+        .max = .{ .width = 3, .height = 4 },
+        .cell_size = .{ .width = 10, .height = 20 },
+    };
+
+    var surface = try scroll_widget.draw(draw_ctx);
+    // Scroll bars should have 3 children: both scrollbars and the scroll view.
+    try std.testing.expectEqual(3, surface.children.len);
+
+    // Hide only the horizontal scroll bar.
+    scroll_bars.draw_horizontal_scrollbar = false;
+    surface = try scroll_widget.draw(draw_ctx);
+    // Scroll bars should have 2 children: vertical scroll bar and the scroll view.
+    try std.testing.expectEqual(2, surface.children.len);
+
+    // Hide only the vertical scroll bar.
+    scroll_bars.draw_horizontal_scrollbar = true;
+    scroll_bars.draw_vertical_scrollbar = false;
+    surface = try scroll_widget.draw(draw_ctx);
+    // Scroll bars should have 2 children: vertical scroll bar and the scroll view.
+    try std.testing.expectEqual(2, surface.children.len);
+
+    // Hide both scroll bars.
+    scroll_bars.draw_horizontal_scrollbar = false;
+    surface = try scroll_widget.draw(draw_ctx);
+    // Scroll bars should have 1 child: the scroll view.
+    try std.testing.expectEqual(1, surface.children.len);
+
+    // Re-enable scroll bars.
+    scroll_bars.draw_horizontal_scrollbar = true;
+    scroll_bars.draw_vertical_scrollbar = true;
+
+    // Even though the estimated size is smaller than the draw area, we still render the scroll
+    // bars if the scroll view knows we haven't rendered everything.
+    scroll_bars.estimated_content_height = 2;
+    scroll_bars.estimated_content_width = 1;
+    surface = try scroll_widget.draw(draw_ctx);
+    // Scroll bars should have 3 children: both scrollbars and the scroll view.
+    try std.testing.expectEqual(3, surface.children.len);
+
+    // The scroll view should be able to tell whether the scroll bars need to be rendered or not
+    // even if estimated content sizes aren't provided.
+    scroll_bars.estimated_content_height = null;
+    scroll_bars.estimated_content_width = null;
+    surface = try scroll_widget.draw(draw_ctx);
+    // Scroll bars should have 3 children: both scrollbars and the scroll view.
+    try std.testing.expectEqual(3, surface.children.len);
+}
 
 test "refAllDecls" {
     std.testing.refAllDecls(@This());
