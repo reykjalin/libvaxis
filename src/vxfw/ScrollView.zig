@@ -620,6 +620,7 @@ test ScrollView {
         .arena = arena.allocator(),
         .min = .{},
         .max = .{ .width = 3, .height = 4 },
+        .cell_size = .{ .width = 10, .height = 20 },
     };
 
     var surface = try scroll_widget.draw(draw_ctx);
@@ -1031,6 +1032,7 @@ test "ScrollView: uneven scroll" {
         .arena = arena.allocator(),
         .min = .{},
         .max = .{ .width = 16, .height = 4 },
+        .cell_size = .{ .width = 10, .height = 20 },
     };
 
     var surface = try scroll_widget.draw(draw_ctx);
